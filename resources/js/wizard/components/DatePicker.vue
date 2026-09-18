@@ -116,8 +116,16 @@ function handleClickOutside(event) {
     }
 }
 
-onMounted(() => document.addEventListener('click', handleClickOutside));
-onUnmounted(() => document.removeEventListener('click', handleClickOutside));
+// Registered on the capture phase deliberately: selecting a year/month
+// re-renders the calendar and removes the clicked button from the DOM
+// (e.g. the year grid unmounts once showYears goes false) before the event
+// would otherwise reach a bubble-phase listener here. At that point
+// container.contains(event.target) sees an already-detached node and
+// reports "outside", closing the picker right after a valid selection.
+// Capture runs before the target's own click handler can mutate anything,
+// so the containment check always sees the still-attached element.
+onMounted(() => document.addEventListener('click', handleClickOutside, true));
+onUnmounted(() => document.removeEventListener('click', handleClickOutside, true));
 </script>
 
 <template>
