@@ -114,14 +114,17 @@ vendor/bin/pest
 
 La suite cubre el cálculo de cotizaciones (incluyendo los recargos por
 región), la validación de fechas, teléfono, cédula/pasaporte y demás datos del
-viajero, la creación y contratación de cotizaciones, los distintos estados de
-una cotización, el manejo de fallas del proveedor de países, el listado
+viajero, la creación y el pago/contratación de cotizaciones (incluyendo
+idempotencia y bloqueo de doble contratación), los distintos estados de una
+cotización, el manejo de fallas del proveedor de países, el listado
 administrativo (incluyendo sus indicadores) y la generación de PDF.
 `tests/Feature/Security/` agrupa las pruebas específicas de seguridad (ver la
-sección siguiente) y `tests/Feature/Auth/` cubre el login, el rechazo de
-cuentas no-admin, el aprovisionamiento automático de cuentas al cotizar (sin
-duplicar cuentas ni reenviar el correo en cotizaciones repetidas) y el flujo
-completo de creación de contraseña de punta a punta.
+sección siguiente) y `tests/Feature/Auth/` cubre el login (por correo o por
+documento de identidad), el rechazo de cuentas no-admin, el aprovisionamiento
+automático de cuentas al contratar (usuario/contraseña = documento, sin
+duplicar cuentas en contrataciones repetidas, con desambiguación de
+colisiones) y el flujo completo de restablecimiento de contraseña de punta a
+punta.
 
 Para las verificaciones que no tiene sentido automatizar en la suite (por
 ejemplo, que un `CHECK constraint` de MySQL realmente exista en la base de
@@ -139,7 +142,7 @@ El backend separa responsabilidades siguiendo las convenciones de Laravel:
 | --- | --- |
 | `Controller` | Manejo de peticiones HTTP |
 | `FormRequest` | Validación de entrada |
-| `Action` | Casos de uso (`CreateQuoteAction`, `ContractQuoteAction`) |
+| `Action` | Casos de uso (`CreateQuoteAction`, `ProcessSimulatedPaymentAction`, `ProvisionCustomerAccountAction`) |
 | `Service` | Lógica de negocio e integraciones externas |
 | `Model` | Persistencia (Eloquent) |
 | `Resource` | Serialización de respuestas JSON |
@@ -162,12 +165,14 @@ GET  /api/countries                     Listado/búsqueda de países
 POST /api/phone/validate                Validación de teléfono en vivo (sin crear nada)
 POST /api/quotes                        Crear una cotización
 GET  /api/quotes/{reference}            Consultar una cotización
-POST /api/quotes/{reference}/contract   Contratar una cotización
+POST /api/quotes/{reference}/payment    Pagar (simulado) y contratar una cotización
 GET  /api/quotes/{reference}/pdf        Descargar el PDF de una cotización
 
 GET  /login                             Formulario de acceso
 POST /login                             Autenticar (solo cuentas con rol admin)
 POST /logout                            Cerrar sesión
+GET  /forgot-password                   Formulario para solicitar el enlace de recuperación
+POST /forgot-password                   Enviar el enlace de recuperación
 GET  /password/reset/{token}            Formulario para crear/restablecer contraseña
 POST /password/reset                    Guardar la nueva contraseña
 
@@ -190,6 +195,16 @@ con `PhoneNumberService`, no vienen del dataset de países.
 valida el número con `PhoneNumberService::isValidNumber()` para ese país
 específico y lo persiste normalizado en formato E.164 (ej. `+593987654321`).
 
+`POST /api/quotes/{reference}/payment` procesa un pago simulado
+(`ProcessSimulatedPaymentAction`): valida tarjeta, vencimiento, CVV y
+términos, es idempotente por `idempotency_key` (reintentar con la misma clave
+nunca duplica el cobro) y usa un bloqueo pesimista (`lockForUpdate()`) para
+que dos pagos concurrentes sobre la misma cotización nunca la contraten dos
+veces. Un pago aprobado marca la cotización como `contracted` y aprovisiona
+la cuenta del cliente (ver siguiente sección); un pago rechazado (tarjeta de
+prueba `4000 0000 0000 0002`) devuelve `402` sin tocar el estado de la
+cotización ni crear ninguna cuenta.
+
 ### Panel administrativo — consulta de contrataciones
 
 `/admin/quotes` muestra, como mínimo, Cliente, Identificación, Destino,
@@ -199,6 +214,18 @@ identificación o destino), filtro por estado y paginación (15 por página).
 Encima de la tabla se muestran indicadores agregados calculados en el
 controlador (`Admin\QuoteController::index()`): total de cotizaciones, total
 contratadas, tasa de conversión y monto total contratado.
+
+Cada fila (o tarjeta, en móvil) abre un modal con el detalle completo del
+registro: datos del asegurado, todos los destinos del viaje (incluye viajes a
+varios países), desglose de precio, datos del pago simulado si existe, la
+cuenta de cliente asociada (usuario) si ya fue aprovisionada, y las fechas de
+creación/contratación. El detalle de cada cotización visible en la página se
+serializa con el mismo `QuoteResource` que usa la API (`resolve()`, para que
+los bloques condicionales `payment`/`account` se omitan correctamente cuando
+no aplican) y se incrusta como JSON en un atributo `data-quote-detail`; un
+script sin dependencias (sin Vue, consistente con que esta vista es Blade
+puro) lo lee al hacer clic y llena el modal — no hay una petición AJAX
+adicional ni un endpoint nuevo que proteger.
 
 ### Cálculo de precios
 
@@ -235,28 +262,41 @@ externa en cada búsqueda.
 
 ## Autenticación y cuentas de usuario
 
-### Cuenta automática al cotizar
+### Cuenta automática al contratar
 
-Cada vez que se crea una cotización, además del registro `Insured`, el
-backend aprovisiona automáticamente una cuenta `User` vinculada a ese
-asegurado (`insured_id`, único), con rol `customer`. Esto ocurre dentro de
-`CreateQuoteAction` vía `ProvisionCustomerAccountAction`:
+La cuenta de cliente no se crea al cotizar, sino al **contratar**: cuando
+`POST /api/quotes/{reference}/payment` aprueba el pago simulado,
+`ProcessSimulatedPaymentAction` marca la cotización como `contracted` y llama
+a `ProvisionCustomerAccountAction` para crear (o reutilizar) el `User`
+vinculado a ese asegurado (`insured_id`, único), con rol `customer`:
 
-- Si el asegurado ya tenía cuenta (misma persona cotizando de nuevo), se
+- **Usuario y contraseña son, ambos, el número de documento de identidad del
+  asegurado** (cédula o pasaporte) — una decisión de negocio explícita, no un
+  secreto generado por el sistema. Si dos asegurados distintos comparten el
+  mismo número de documento (tipos distintos), el segundo recibe un sufijo
+  (`documento-2`, `documento-3`, ...) para no colisionar.
+- Si el asegurado ya tenía cuenta (misma persona contratando de nuevo), se
   reutiliza la misma cuenta y solo se actualizan nombre/correo — nunca se
-  duplica ni se reinicia la contraseña.
-- La cuenta nunca recibe una contraseña generada por el sistema transmitida
-  en texto plano ni en la respuesta de la API. En su lugar, la primera vez se
-  le envía un correo de "crear contraseña" con un enlace de un solo uso
-  (mecanismo estándar de Laravel: `Password::sendResetLink()` + la
-  notificación `ResetPassword`, válido 60 minutos).
+  duplica ni se reinicia la contraseña ya establecida por el cliente.
+- La respuesta JSON de `/payment` incluye un bloque `data.account` (solo
+  cuando el pago fue aprobado) con `username` y `password` en texto plano
+  para que el frontend se los muestre al cliente en la pantalla de
+  confirmación — es información que el cliente ya conoce (su propio
+  documento), no una fuga de un secreto generado por el servidor. El cliente
+  puede cambiarla después con "¿Olvidaste tu contraseña?"
+  (`/forgot-password` → `/password/reset/{token}`).
 - Si el aprovisionamiento de la cuenta falla por cualquier motivo, el error
-  se registra en el log pero **nunca** hace fallar la creación de la
-  cotización — es una operación auxiliar, no el flujo principal.
+  se registra en el log pero **nunca** revierte un pago ya aprobado — es una
+  operación auxiliar dentro de la misma transacción de base de datos que crea
+  el registro de pago, no el flujo principal.
 
-Hoy no existe un panel para que un cliente autenticado vea sus propias
-cotizaciones (no fue solicitado); la cuenta y su contraseña ya quedan listas
-para cuando se construya esa pantalla. Ver "Mejoras futuras".
+Un login con rol `customer` es válido (`LoginRequest` acepta el documento
+como usuario o el correo como identificador, ambos vía el campo unificado
+`login`), pero `AuthenticatedSessionController` solo deja la sesión abierta
+para cuentas `admin`; ver la sección siguiente. Hoy no existe un panel para
+que un cliente autenticado vea sus propias cotizaciones (no fue solicitado);
+la cuenta ya queda lista para cuando se construya esa pantalla. Ver "Mejoras
+futuras".
 
 ### Acceso al panel administrativo
 
@@ -285,6 +325,37 @@ repositorio. El seeder es idempotente: si el correo ya existe, no hace nada.
 ```bash
 php artisan db:seed
 ```
+
+### Datos de ejemplo y usuarios de prueba
+
+`database/seeders/ContractsDemoSeeder.php` (encadenado desde
+`DatabaseSeeder`, se ejecuta con el mismo `php artisan db:seed`) llena el
+módulo de contrataciones con datos realistas: 45 cotizaciones repartidas en
+las seis regiones (incluyendo viajes a varios destinos), con fechas variadas
+y aproximadamente un 60% ya contratadas. Cada cotización contratada incluye
+su pago simulado aprobado y su cuenta de cliente aprovisionada de la misma
+forma que en producción (usuario y contraseña = documento de identidad),
+reutilizando `ProvisionCustomerAccountAction`. Es idempotente: si ya existen
+registros de ejemplo (identificados por un marcador en el correo del
+asegurado), se omite en una segunda ejecución.
+
+Al terminar, el seeder imprime en consola una tabla con credenciales de
+clientes de prueba (documento = usuario = contraseña) listas para probar el
+login. Para volver a verlas sin re-sembrar:
+
+```bash
+php artisan tinker --execute '
+App\Models\User::where("role", "customer")->whereNotNull("username")
+    ->limit(10)->get(["username"])
+    ->each(fn ($u) => print("usuario/contraseña: {$u->username}\n"));
+'
+```
+
+El usuario administrador inicial (`ADMIN_EMAIL`/`ADMIN_PASSWORD` en `.env`,
+ver arriba) es la única cuenta con acceso al panel `/admin/quotes`; las
+cuentas `customer` sembradas sirven para probar el flujo de login con
+documento de identidad y el restablecimiento de contraseña, no el panel
+administrativo.
 
 ## Manejo de errores
 
@@ -395,11 +466,13 @@ filesystem del servidor — verificado con un test dedicado que fuerza
   del asegurado y de la cotización en `DB::transaction()`. Si la creación de
   la cotización falla, la actualización del asegurado también se revierte —
   nunca queda un asegurado modificado sin su cotización correspondiente.
-- **Bloqueo de fila (row lock):** `ContractQuoteAction` relee la cotización
-  con `lockForUpdate()` dentro de una transacción antes de comprobar su
-  estado, cerrando la condición de carrera en la que dos peticiones
-  simultáneas de contratación sobre la misma cotización podrían pasar ambas
-  la verificación de "no contratada todavía".
+- **Bloqueo de fila (row lock):** `ProcessSimulatedPaymentAction` relee la
+  cotización con `lockForUpdate()` dentro de una transacción antes de
+  comprobar su estado, cerrando la condición de carrera en la que dos pagos
+  simultáneos sobre la misma cotización podrían pasar ambos la verificación
+  de "no contratada todavía"; la clave de idempotencia (`idempotency_key`) se
+  comprueba dentro del mismo bloqueo, así que reintentar un pago con la misma
+  clave nunca crea un segundo cobro.
 - **Restricciones a nivel de base de datos, no solo en PHP:** además de las
   claves foráneas (`ON DELETE CASCADE` de `quotes.insured_id`; `ON DELETE SET
   NULL` de `users.insured_id`, para no destruir una cuenta si el asegurado se

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Enums\QuoteStatus;
 use App\Http\Controllers\Controller;
+use App\Http\Resources\QuoteResource;
 use App\Models\Quote;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
@@ -16,7 +17,7 @@ class QuoteController extends Controller
         $status = $request->query('status');
 
         $quotes = Quote::query()
-            ->with('insured')
+            ->with(['insured.user', 'latestPayment'])
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($query) use ($search) {
                     $query->where('reference', 'like', "%{$search}%")
@@ -43,12 +44,17 @@ class QuoteController extends Controller
             'conversion_rate' => $totalQuotes > 0 ? round($totalContracted / $totalQuotes * 100, 1) : 0.0,
         ];
 
+        $quoteDetails = $quotes->getCollection()->mapWithKeys(
+            fn (Quote $quote) => [$quote->reference => QuoteResource::make($quote)->resolve($request)],
+        );
+
         return view('admin.quotes.index', [
             'quotes' => $quotes,
             'search' => $search,
             'status' => $status,
             'statuses' => QuoteStatus::cases(),
             'stats' => $stats,
+            'quoteDetails' => $quoteDetails,
         ]);
     }
 }

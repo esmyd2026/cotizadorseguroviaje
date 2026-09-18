@@ -27,8 +27,16 @@ const { state, reset } = useWizardState();
             <span>Aut. {{ state.quote.payment.authorization_code }}</span>
         </div>
 
-        <div class="mt-5 max-w-md rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-left text-xs leading-5 text-brand-navy">
-            <p class="flex items-start gap-2"><AppIcon name="mail" :size="17" class="mt-0.5 shrink-0 text-brand-navy-mid" /> <span>Enviamos a <strong>{{ state.quote.insured.email }}</strong> el enlace para crear tu contraseña.</span></p>
+        <div v-if="state.quote.account" class="mt-5 max-w-md rounded-2xl border border-sky-100 bg-sky-50 px-4 py-3 text-left text-xs leading-5 text-brand-navy">
+            <p class="flex items-start gap-2">
+                <AppIcon name="lock" :size="17" class="mt-0.5 shrink-0 text-brand-navy-mid" />
+                <span>
+                    Ya puedes iniciar sesión con tu cuenta de cliente. Tu usuario y tu contraseña son tu número de
+                    identificación:
+                    <strong class="font-mono">{{ state.quote.account.username }}</strong>.
+                    Puedes cambiar la contraseña luego desde "¿Olvidaste tu contraseña?".
+                </span>
+            </p>
         </div>
 
         <div class="mt-8 flex w-full flex-col items-center gap-2.5">
