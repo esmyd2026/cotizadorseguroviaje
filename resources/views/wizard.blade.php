@@ -8,10 +8,12 @@
 
         <title>{{ config('app.name') }} — Cotiza tu seguro de viaje</title>
 
+        <meta name="csrf-token" content="{{ csrf_token() }}">
+
         @fonts
         @vite(['resources/css/app.css', 'resources/js/app.js'])
     </head>
     <body class="min-h-screen bg-brand-gray-light text-brand-navy antialiased">
-        <div id="app"></div>
+        <div id="app" data-auth='@json(auth()->check() ? ["name" => auth()->user()->name, "isAdmin" => auth()->user()->isAdmin()] : null)'></div>
     </body>
 </html>

@@ -4,6 +4,7 @@ use App\Http\Controllers\Admin\QuoteController as AdminQuoteController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\ForgotPasswordController;
 use App\Http\Controllers\Auth\NewPasswordController;
+use App\Http\Controllers\Customer\QuoteController as CustomerQuoteController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -28,3 +29,7 @@ Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])
 Route::get('/admin/quotes', [AdminQuoteController::class, 'index'])
     ->middleware(['auth', 'admin'])
     ->name('admin.quotes.index');
+
+Route::get('/mis-cotizaciones', [CustomerQuoteController::class, 'index'])
+    ->middleware('auth')
+    ->name('customer.quotes.index');

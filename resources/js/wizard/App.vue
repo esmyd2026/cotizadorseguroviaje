@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue';
 import AppIcon from './components/AppIcon.vue';
+import DesktopTopNav from './components/DesktopTopNav.vue';
 import InfoSheet from './components/InfoSheet.vue';
 import MobileBottomNav from './components/MobileBottomNav.vue';
 import ProgressStepper from './components/ProgressStepper.vue';
@@ -18,6 +19,15 @@ import StepTraveler from './steps/StepTraveler.vue';
 const { state, goTo, macroStep } = useWizardState();
 const { createQuote } = useQuoteApi();
 const logoUrl = '/image/logo.png';
+
+const auth = (() => {
+    try {
+        return JSON.parse(document.getElementById('app')?.dataset.auth ?? 'null');
+    } catch {
+        return null;
+    }
+})();
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content ?? '';
 
 const stepComponents = {
     destination: StepDestination,
@@ -106,8 +116,12 @@ function handleBack() {
     }
 }
 
-function handleMobileNavigation(section) {
+function handleNavigation(section) {
     infoSection.value = section === 'quote' ? null : section;
+
+    if (section === 'quote') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
 }
 </script>
 
@@ -118,18 +132,18 @@ function handleMobileNavigation(section) {
                 <div class="flex items-center gap-2.5">
                     <img :src="logoUrl" alt="Gestión Segura" class="h-9 w-auto object-contain" />
                 </div>
-                <a href="/login" class="trust-pill transition hover:border-brand-gold hover:bg-amber-50"><AppIcon name="login" :size="14" /> Iniciar sesión</a>
+                <a v-if="!auth" href="/login" class="trust-pill transition hover:border-brand-gold hover:bg-amber-50"><AppIcon name="login" :size="14" /> Iniciar sesión</a>
+                <a v-else-if="auth.isAdmin" href="/admin/quotes" class="trust-pill transition hover:border-brand-gold hover:bg-amber-50"><AppIcon name="login" :size="14" /> Panel admin</a>
+                <a v-else href="/mis-cotizaciones" class="trust-pill transition hover:border-brand-gold hover:bg-amber-50"><AppIcon name="document" :size="14" /> Mis seguros</a>
             </div>
         </header>
 
-        <main class="mx-auto grid w-full max-w-[1180px] gap-8 px-3 py-4 sm:px-6 sm:py-10 lg:grid-cols-[300px_minmax(0,760px)] lg:gap-12 lg:py-14">
+        <DesktopTopNav :active="infoSection ?? 'quote'" :auth="auth" :csrf-token="csrfToken" @select="handleNavigation" />
+
+        <main class="mx-auto grid w-full max-w-[1180px] gap-8 px-3 py-4 sm:px-6 sm:py-8 lg:grid-cols-[300px_minmax(0,760px)] lg:gap-12 lg:py-12">
             <aside class="hidden lg:flex lg:flex-col lg:justify-between">
                 <div>
-                    <div class="flex items-center gap-3">
-                        <img :src="logoUrl" alt="Gestión Segura" class="h-auto w-56 object-contain" />
-                    </div>
-
-                    <div class="mt-14">
+                    <div class="mt-3">
                         <span class="eyebrow"><AppIcon name="sparkle" :size="15" /> Cotiza en pocos minutos</span>
                         <h1 class="mt-5 text-4xl font-light leading-[1.08] tracking-[-0.03em] text-brand-navy">
                             Viaja tranquilo.<br />Nosotros te<br /><span class="font-medium text-brand-navy-mid">acompañamos.</span>
@@ -148,11 +162,6 @@ function handleMobileNavigation(section) {
             </aside>
 
             <section class="min-w-0">
-                <div class="mb-3 hidden items-center justify-end sm:flex">
-                    <a href="/login" class="inline-flex min-h-10 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-brand-navy-mid transition hover:bg-white hover:shadow-sm">
-                        <AppIcon name="login" :size="16" /> ¿Ya eres cliente? Iniciar sesión
-                    </a>
-                </div>
                 <ProgressStepper v-if="showStepper" :current="currentMacroStep" class="mb-4 sm:mb-5" />
 
                 <div class="wizard-surface">
@@ -167,7 +176,7 @@ function handleMobileNavigation(section) {
             </section>
         </main>
 
-        <MobileBottomNav :active="infoSection ?? 'quote'" @select="handleMobileNavigation" />
+        <MobileBottomNav :active="infoSection ?? 'quote'" @select="handleNavigation" />
         <InfoSheet v-if="infoSection" :section="infoSection" @close="infoSection = null" />
     </div>
 </template>

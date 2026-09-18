@@ -9,9 +9,9 @@ const logoUrl = '/image/logo.png';
 <template>
     <Teleport to="body">
         <Transition name="sheet">
-            <div class="fixed inset-0 z-50 flex items-end bg-brand-navy/35 backdrop-blur-[2px] sm:hidden" @click.self="$emit('close')">
-                <section class="max-h-[78vh] w-full overflow-y-auto rounded-t-[1.75rem] bg-white px-5 pb-[calc(6.5rem+env(safe-area-inset-bottom))] pt-3 shadow-[0_-20px_60px_rgba(22,36,61,0.2)]">
-                    <div class="mx-auto h-1 w-10 rounded-full bg-slate-200" />
+            <div class="fixed inset-0 z-50 flex items-end bg-brand-navy/35 backdrop-blur-[2px] sm:items-center sm:justify-center sm:p-6" @click.self="$emit('close')">
+                <section class="max-h-[78vh] w-full overflow-y-auto rounded-t-[1.75rem] bg-white px-5 pb-[calc(6.5rem+env(safe-area-inset-bottom))] pt-3 shadow-[0_-20px_60px_rgba(22,36,61,0.2)] sm:max-w-xl sm:rounded-[1.75rem] sm:p-7 sm:shadow-[0_24px_70px_rgba(22,36,61,0.24)]">
+                    <div class="mx-auto h-1 w-10 rounded-full bg-slate-200 sm:hidden" />
                     <div class="mt-4 flex items-center justify-between">
                         <img :src="logoUrl" alt="Gestión Segura" class="h-9 w-auto" />
                         <button type="button" class="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-gray-light text-brand-gray" aria-label="Cerrar" @click="$emit('close')"><AppIcon name="x" :size="18" /></button>

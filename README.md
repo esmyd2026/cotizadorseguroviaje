@@ -2,9 +2,41 @@
 
 Sistema web para cotizar y contratar seguros de viaje. El cliente elige un destino,
 selecciona sus fechas y completa sus datos en un flujo progresivo tipo wizard; el
-backend calcula el precio, persiste la cotización y permite contratarla y descargar
-tanto la cotización como el comprobante en PDF. Incluye además un panel
-administrativo para consultar las cotizaciones y contrataciones generadas.
+backend calcula el precio, persiste la cotización y permite contratarla (con pago
+simulado) y descargar tanto la cotización como el comprobante en PDF. Incluye
+además un panel administrativo para consultar las cotizaciones y contrataciones
+generadas, y un panel propio para cada cliente.
+
+## Funcionalidades principales
+
+- **Cotizador progresivo** (Vue 3, tipo wizard): destino único o multi-destino (2
+  a 5 países), cálculo de precio en tiempo real por días y región, validación de
+  teléfono en vivo por país.
+- **Contratación con pago simulado**: tarjeta, vencimiento, CVV y términos
+  validados; idempotente (reintentar nunca duplica el cobro); tarjetas de prueba
+  para simular una aprobación o un rechazo.
+- **Cuenta de cliente automática al contratar**: usuario y contraseña son el
+  número de identificación del asegurado, mostrados de inmediato en la pantalla
+  de confirmación — sin pasos adicionales para el cliente.
+- **Login unificado por correo o identificación**, con protección contra fuerza
+  bruta, y flujo completo de recuperación de contraseña.
+- **"Mis seguros"** (`/mis-cotizaciones`): cada cliente ve el estado y el detalle
+  completo de sus propias cotizaciones y pólizas — nunca las de otro cliente.
+- **Panel administrativo** (`/admin/quotes`): listado completo de cotizaciones y
+  contrataciones con búsqueda, filtros, paginación, indicadores agregados
+  (total, contratadas, conversión, ingresos) y un modal de detalle por registro.
+- **PDF** de la cotización y del comprobante de contratación.
+- **Integración de países** sin API key ni credenciales externas (dataset
+  abierto, con caché de 24 h).
+- **Datos y usuarios de demostración** siempre disponibles: cuenta admin,
+  cuenta de cliente demo y un lote de cotizaciones realistas, todo reproducible
+  con un solo `php artisan db:seed` — ver [Autenticación y cuentas de
+  usuario](#autenticación-y-cuentas-de-usuario).
+- **Seguridad e integridad de datos** de punta a punta: validación estricta,
+  protección contra mass assignment, IDOR, XSS, inyección SQL, rate limiting,
+  `CHECK` constraints a nivel de base de datos y bloqueo de condiciones de
+  carrera — ver [Seguridad e integridad de
+  datos](#seguridad-e-integridad-de-datos).
 
 ## Stack
 
@@ -60,10 +92,14 @@ ADMIN_PASSWORD=una-contraseña-segura
 Si se omiten, el seeder genera una contraseña aleatoria y la muestra una sola
 vez en la consola (nunca se guarda en ningún archivo).
 
-`MAIL_MAILER=log` (valor por defecto) escribe el correo de "crear
-contraseña" en `storage/logs/laravel.log` en vez de enviarlo — suficiente
-para desarrollo. En producción, configurar un mailer real (`smtp`, `ses`,
-etc.) para que ese correo llegue de verdad a cada cliente que cotiza.
+`MAIL_MAILER=log` (valor por defecto) escribe el correo de recuperación de
+contraseña (flujo "¿Olvidaste tu contraseña?") en `storage/logs/laravel.log`
+en vez de enviarlo — suficiente para desarrollo. En producción, configurar
+un mailer real (`smtp`, `ses`, etc.) para que ese correo llegue de verdad.
+La cuenta de cliente en sí no se crea por correo: usuario y contraseña son
+el número de identificación del asegurado, mostrados directamente en la
+pantalla de confirmación al contratar (ver [Autenticación y cuentas de
+usuario](#autenticación-y-cuentas-de-usuario)).
 
 ## Migraciones
 
@@ -71,9 +107,10 @@ etc.) para que ese correo llegue de verdad a cada cliente que cotiza.
 php artisan migrate --seed
 ```
 
-`--seed` crea el usuario administrador inicial (ver
-[Autenticación y cuentas de usuario](#autenticación-y-cuentas-de-usuario)).
-Si ya migraste sin `--seed`, ejecuta `php artisan db:seed` por separado.
+`--seed` crea el usuario administrador inicial, una cuenta de cliente demo y
+un lote de cotizaciones/contrataciones de ejemplo (ver [Autenticación y
+cuentas de usuario](#autenticación-y-cuentas-de-usuario)). Si ya migraste sin
+`--seed`, ejecuta `php artisan db:seed` por separado.
 
 Modelos principales: `Insured` (asegurado) y `Quote` (cotización), en relación
 `hasMany` / `belongsTo`. Los valores monetarios se almacenan como `DECIMAL`.
@@ -98,11 +135,19 @@ npm run dev
 ```
 
 La aplicación queda disponible en `http://localhost:8000`. El panel
-administrativo está en `/admin/quotes`.
+administrativo está en `/admin/quotes`, el panel del cliente en
+`/mis-cotizaciones`.
 
 Para producción, o para automatizar cualquiera de estos pasos (instalación,
 build de assets, migraciones, cachés), ver [`DEPLOY.md`](DEPLOY.md) y los
 scripts en [`deploy/`](deploy/).
+
+### Logs
+
+`LOG_STACK=daily` (`.env`) rota `storage/logs/laravel-{fecha}.log` un
+archivo por día, reteniendo `LOG_DAILY_DAYS` (14 por defecto) — útil para
+revisar la actividad de un día concreto sin buscar en un único archivo que
+crece indefinidamente.
 
 ## Tests
 
@@ -119,12 +164,14 @@ idempotencia y bloqueo de doble contratación), los distintos estados de una
 cotización, el manejo de fallas del proveedor de países, el listado
 administrativo (incluyendo sus indicadores) y la generación de PDF.
 `tests/Feature/Security/` agrupa las pruebas específicas de seguridad (ver la
-sección siguiente) y `tests/Feature/Auth/` cubre el login (por correo o por
+sección siguiente), `tests/Feature/Auth/` cubre el login (por correo o por
 documento de identidad), el rechazo de cuentas no-admin, el aprovisionamiento
 automático de cuentas al contratar (usuario/contraseña = documento, sin
 duplicar cuentas en contrataciones repetidas, con desambiguación de
-colisiones) y el flujo completo de restablecimiento de contraseña de punta a
-punta.
+colisiones), la caja de credenciales demo del login y el flujo completo de
+restablecimiento de contraseña de punta a punta, y
+`tests/Feature/Customer/` cubre que cada cliente vea únicamente sus propias
+cotizaciones en `/mis-cotizaciones`.
 
 Para las verificaciones que no tiene sentido automatizar en la suite (por
 ejemplo, que un `CHECK constraint` de MySQL realmente exista en la base de
@@ -177,6 +224,7 @@ GET  /password/reset/{token}            Formulario para crear/restablecer contra
 POST /password/reset                    Guardar la nueva contraseña
 
 GET  /admin/quotes                      Panel administrativo (Blade, requiere sesión + rol admin)
+GET  /mis-cotizaciones                  Mis seguros: cotizaciones propias del cliente (Blade, requiere sesión)
 ```
 
 Las cotizaciones se identifican públicamente por su `reference`
@@ -225,7 +273,24 @@ los bloques condicionales `payment`/`account` se omitan correctamente cuando
 no aplican) y se incrusta como JSON en un atributo `data-quote-detail`; un
 script sin dependencias (sin Vue, consistente con que esta vista es Blade
 puro) lo lee al hacer clic y llena el modal — no hay una petición AJAX
-adicional ni un endpoint nuevo que proteger.
+adicional ni un endpoint nuevo que proteger. Ese modal vive en
+`resources/views/partials/quote-detail-modal.blade.php`, compartido con
+`/mis-cotizaciones` (siguiente sección) para no duplicar el mismo
+marcado/script dos veces.
+
+### Mis seguros — panel del cliente
+
+`/mis-cotizaciones` es el equivalente del panel administrativo pero para el
+propio cliente: `Customer\QuoteController::index()` solo consulta
+cotizaciones donde `insured_id` coincide con el del usuario autenticado
+(`$request->user()->insured_id`, resuelto en el servidor, nunca un
+parámetro de la petición), así que un cliente nunca puede ver las
+cotizaciones de otro. Reutiliza exactamente el mismo modal de detalle que el
+panel administrativo. Si una cuenta `admin` visita esta ruta, se redirige a
+`/admin/quotes` en vez de mostrar una lista vacía. El enlace "Mis seguros"
+aparece en el encabezado del cotizador (`App.vue` / `DesktopTopNav.vue`)
+solo para una sesión de cliente autenticada — ver [Autenticación y cuentas
+de usuario](#autenticación-y-cuentas-de-usuario).
 
 ### Cálculo de precios
 
@@ -290,25 +355,37 @@ vinculado a ese asegurado (`insured_id`, único), con rol `customer`:
   operación auxiliar dentro de la misma transacción de base de datos que crea
   el registro de pago, no el flujo principal.
 
-Un login con rol `customer` es válido (`LoginRequest` acepta el documento
-como usuario o el correo como identificador, ambos vía el campo unificado
-`login`), pero `AuthenticatedSessionController` solo deja la sesión abierta
-para cuentas `admin`; ver la sección siguiente. Hoy no existe un panel para
-que un cliente autenticado vea sus propias cotizaciones (no fue solicitado);
-la cuenta ya queda lista para cuando se construya esa pantalla. Ver "Mejoras
-futuras".
+Un login con rol `customer` es una sesión válida y persistente (`LoginRequest`
+acepta el documento como usuario o el correo como identificador, ambos vía el
+campo unificado `login`) — no se cierra automáticamente como en una versión
+anterior de este flujo. `AuthenticatedSessionController::store()` solo
+diferencia el destino tras autenticar: una cuenta `admin` va a
+`/admin/quotes`, una cuenta `customer` vuelve al cotizador (`/`), donde ya
+puede ver sus propias cotizaciones en `/mis-cotizaciones` ("Mis seguros" —
+ver [Mis seguros — panel del
+cliente](#mis-seguros--panel-del-cliente)). El cotizador
+(`resources/views/wizard.blade.php` → `App.vue`) refleja la sesión: el
+encabezado recibe el estado de autenticación como `data-auth` (JSON con
+`name`/`isAdmin`, embebido por el propio Blade con `auth()->check()`, sin
+llamada adicional) y reemplaza el enlace "Iniciar sesión" por un enlace a
+"Mis seguros" (cuentas `customer`) o un acceso directo a `/admin/quotes`
+(cuentas `admin`); cerrar sesión (`POST /logout` con el token CSRF de una
+etiqueta `<meta>`) está disponible desde el encabezado de ambas páginas de
+destino. Antes de esto, el enlace "Iniciar sesión" del cotizador era
+estático: un cliente ya autenticado lo veía igual que un invitado y, al
+hacer clic, `/login` (bajo middleware `guest`) lo devolvía a `/` sin aviso —
+parecía que el enlace "no llevaba a ningún lado".
 
 ### Acceso al panel administrativo
 
 `/admin/quotes` requiere sesión (`auth`) y rol `admin` (middleware `admin` →
 `EnsureUserIsAdmin`); una cuenta `customer` autenticada recibe `403`, no
 `200`, si intenta acceder — probado explícitamente en
-`tests/Feature/Admin/QuoteControllerTest.php`. El formulario de `/login`
-(`AuthenticatedSessionController`) solo deja la sesión abierta si la cuenta
-es `admin`; si una cuenta `customer` inicia sesión ahí, se cierra la sesión
-de inmediato y se muestra un mensaje explicando que esa cuenta no tiene
-acceso a esa sección — un mismo formulario de login no es una puerta trasera
-al panel administrativo.
+`tests/Feature/Admin/QuoteControllerTest.php` y en
+`tests/Feature/Auth/AuthenticationTest.php`. Esta es la única puerta al panel
+administrativo: `EnsureUserIsAdmin` la aplica sin importar a dónde redirigió
+el login, así que dejar que las cuentas `customer` mantengan sesión (arriba)
+no abre ningún acceso adicional.
 
 El intento de login está protegido contra fuerza bruta independientemente
 del `RateLimiter` de `api/*`: 5 intentos por combinación de correo + IP
@@ -316,17 +393,38 @@ del `RateLimiter` de `api/*`: 5 intentos por combinación de correo + IP
 
 ### Usuario administrador inicial
 
-`database/seeders/DatabaseSeeder.php` crea un único usuario `admin` (rol
-`admin`) leyendo `ADMIN_EMAIL`/`ADMIN_PASSWORD` de `.env`; si no están
-definidas, genera una contraseña aleatoria de 16 caracteres y la imprime una
-sola vez en la consola — nunca queda hardcodeada ni en ningún archivo del
-repositorio. El seeder es idempotente: si el correo ya existe, no hace nada.
+`database/seeders/DatabaseSeeder.php` lee `ADMIN_EMAIL`/`ADMIN_PASSWORD` de
+`.env` (vía `config/demo.php`). Si `ADMIN_PASSWORD` está definida, el
+usuario `admin` se crea **o actualiza** con esa contraseña en cada
+`db:seed` — determinista, para que el acceso nunca se pierda ni quede
+desincronizado. Si no está definida, se genera una contraseña aleatoria de
+16 caracteres la primera vez y se imprime una sola vez en consola (nunca
+queda hardcodeada en el repositorio); en ese caso el seeder no la vuelve a
+tocar en ejecuciones posteriores, para no rotar una contraseña que nadie
+pidió cambiar.
 
 ```bash
 php artisan db:seed
 ```
 
-### Datos de ejemplo y usuarios de prueba
+### Cuenta de cliente demo
+
+`database/seeders/DemoAccountsSeeder.php` (encadenado desde
+`DatabaseSeeder`) garantiza, en cada `db:seed`, una cuenta de cliente fija y
+reproducible: cédula `1710034065` (usuario y contraseña son el mismo
+número), con una cotización ya contratada (`SEG-DEMO-000001`) y su pago
+aprobado, para que `/mis-cotizaciones` no aparezca vacío la primera vez que
+alguien prueba la plataforma. A diferencia de `ContractsDemoSeeder`
+(abajo), que omite su lote de datos aleatorios si ya existen, este siempre
+hace upsert del mismo registro — cero duplicados en ejecuciones repetidas.
+
+Tanto el admin como la cuenta de cliente demo se muestran directamente en
+`/login`, en una caja "Acceso de demostración" debajo del formulario — pero
+**solo cuando `APP_ENV=local`** (`config('demo.show_credentials')`, ver
+`config/demo.php`); en cualquier otro entorno la caja no se renderiza, para
+no exponer credenciales de acceso en un despliegue real.
+
+### Datos de ejemplo y usuarios de prueba adicionales
 
 `database/seeders/ContractsDemoSeeder.php` (encadenado desde
 `DatabaseSeeder`, se ejecuta con el mismo `php artisan db:seed`) llena el
@@ -528,8 +626,6 @@ una librería externa de iconografía.
 
 ## Mejoras futuras
 
-- Panel para que un cliente autenticado (cuenta creada automáticamente al
-  cotizar) vea sus propias cotizaciones y contrataciones.
 - Notificación por correo al confirmar una contratación.
 - Internacionalización (actualmente la interfaz solo está en español).
 - Soporte de múltiples monedas.

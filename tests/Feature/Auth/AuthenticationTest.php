@@ -21,20 +21,18 @@ it('lets an admin log in with their email and reach the admin panel', function (
 
 it('resolves a document number as a username credential, not an email', function () {
     $insured = Insured::factory()->create(['document_id' => '1710034065']);
-    app(ProvisionCustomerAccountAction::class)
+    $customer = app(ProvisionCustomerAccountAction::class)
         ->execute($insured, $insured->email, "{$insured->first_name} {$insured->last_name}");
 
     expect(Auth::attempt(['username' => '1710034065', 'password' => '1710034065']))->toBeTrue();
     Auth::logout();
 
-    // The admin-only login gate (covered separately below) still applies —
-    // this test isolates credential resolution from that authorization rule.
     $this->post('/login', [
         'login' => '1710034065',
         'password' => '1710034065',
-    ])->assertRedirect('/login');
+    ])->assertRedirect(route('wizard'));
 
-    $this->assertGuest();
+    $this->assertAuthenticatedAs($customer);
 });
 
 it('rejects an incorrect password', function () {
@@ -48,15 +46,28 @@ it('rejects an incorrect password', function () {
     $this->assertGuest();
 });
 
-it('logs a customer account back out and denies admin access', function () {
+it('logs a customer in to the wizard, still denied from the admin panel', function () {
     $customer = User::factory()->create(['password' => 'correct-password']);
 
     $this->post('/login', [
         'login' => $customer->email,
         'password' => 'correct-password',
-    ])->assertRedirect('/login');
+    ])->assertRedirect(route('wizard'));
 
-    $this->assertGuest();
+    $this->assertAuthenticatedAs($customer);
+
+    $this->get(route('admin.quotes.index'))->assertForbidden();
+});
+
+it('exposes auth state to the wizard so the header can reflect it', function () {
+    $this->get('/')->assertOk()->assertSee("data-auth='null'", false);
+
+    $admin = User::factory()->admin()->create(['name' => 'Ada Min']);
+
+    $this->actingAs($admin)->get('/')
+        ->assertOk()
+        ->assertSee('"name":"Ada Min"', false)
+        ->assertSee('"isAdmin":true', false);
 });
 
 it('logs the user out', function () {
